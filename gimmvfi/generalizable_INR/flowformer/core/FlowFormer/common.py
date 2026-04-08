@@ -39,7 +39,7 @@ def sampler_gaussian(latent, mean, std, image_size, point_num=25):
 
     dx = torch.linspace(-1, 1, int(point_num**0.5))
     dy = torch.linspace(-1, 1, int(point_num**0.5))
-    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(
+    delta = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), axis=-1).to(
         mean.device
     )  # [B*H*W, point_num**0.5, point_num**0.5, 2]
     delta_3sigma = (
@@ -77,7 +77,7 @@ def sampler_gaussian_zy(
 
     dx = torch.linspace(-1, 1, int(point_num**0.5))
     dy = torch.linspace(-1, 1, int(point_num**0.5))
-    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(
+    delta = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), axis=-1).to(
         mean.device
     )  # [B*H*W, point_num**0.5, point_num**0.5, 2]
     delta_3sigma = (
@@ -114,7 +114,7 @@ def sampler_gaussian(latent, mean, std, image_size, point_num=25, return_deltaXY
 
     dx = torch.linspace(-1, 1, int(point_num**0.5))
     dy = torch.linspace(-1, 1, int(point_num**0.5))
-    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(
+    delta = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), axis=-1).to(
         mean.device
     )  # [B*H*W, point_num**0.5, point_num**0.5, 2]
     delta_3sigma = (
@@ -155,7 +155,7 @@ def sampler_gaussian_fix(latent, mean, image_size, point_num=49):
 
     dx = torch.linspace(-radius, radius, 2 * radius + 1)
     dy = torch.linspace(-radius, radius, 2 * radius + 1)
-    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(
+    delta = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), axis=-1).to(
         mean.device
     )  # [B*H*W, point_num**0.5, point_num**0.5, 2]
 
@@ -191,7 +191,7 @@ def sampler_gaussian_fix_pyramid(
 
     dx = torch.linspace(-radius, radius, 2 * radius + 1)
     dy = torch.linspace(-radius, radius, 2 * radius + 1)
-    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(
+    delta = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), axis=-1).to(
         mean.device
     )  # [B*H*W, point_num**0.5, point_num**0.5, 2]
 
@@ -244,7 +244,7 @@ def sampler_gaussian_pyramid(
 
     dx = torch.linspace(-1, 1, int(point_num**0.5))
     dy = torch.linspace(-1, 1, int(point_num**0.5))
-    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(
+    delta = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), axis=-1).to(
         mean.device
     )  # [B*H*W, point_num**0.5, point_num**0.5, 2]
     delta_3sigma = (
@@ -334,7 +334,7 @@ def sampler_gaussian_fix_pyramid_MH(
 
     dx = torch.linspace(-radius, radius, 2 * radius + 1)
     dy = torch.linspace(-radius, radius, 2 * radius + 1)
-    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(
+    delta = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), axis=-1).to(
         mean.device
     )  # [B*H*W, point_num**0.5, point_num**0.5, 2]
 
@@ -380,7 +380,7 @@ def sampler(feat, center, window_size):
     radius = window_size // 2
     dx = torch.linspace(-radius, radius, 2 * radius + 1)
     dy = torch.linspace(-radius, radius, 2 * radius + 1)
-    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(
+    delta = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), axis=-1).to(
         center.device
     )  # [B*H*W, window_size, point_num**0.5, 2]
 
@@ -402,7 +402,7 @@ def retrieve_tokens(feat, center, window_size, sampler):
     radius = window_size // 2
     dx = torch.linspace(-radius, radius, 2 * radius + 1)
     dy = torch.linspace(-radius, radius, 2 * radius + 1)
-    delta = torch.stack(torch.meshgrid(dy, dx), axis=-1).to(
+    delta = torch.stack(torch.meshgrid(dy, dx, indexing="ij"), axis=-1).to(
         center.device
     )  # [B*H*W, point_num**0.5, point_num**0.5, 2]
 

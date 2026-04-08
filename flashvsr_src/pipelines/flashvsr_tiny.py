@@ -244,7 +244,7 @@ class FlashVSRTinyPipeline(BasePipeline):
         if context_tensor is None:
             if prompt_path is None:
                 raise ValueError("init_cross_kv: 需要提供 prompt_path 或 context_tensor 其一")
-            ctx = torch.load(prompt_path, map_location=self.device)
+            ctx = torch.load(prompt_path, map_location=self.device, weights_only=True)
         else:
             ctx = context_tensor
 

@@ -163,13 +163,15 @@ class VSRFINode:
             return "Invalid video file: {}".format(video_path)
         return True
 
-    def process(self, video_path, output_path, scale, frames_per_chunk, max_tile_kilopixels, max_gimm_kilopixels, interpolation_factor, vfi_method="GIMM-VFI", skip_first_frames=0, frame_load_cap=0):
+    def process(self, video_path, output_path, scale, frames_per_chunk, max_tile_kilopixels, max_gimm_kilopixels, interpolation_factor, vfi_method="GIMM-VFI", skip_first_frames=0, frame_load_cap=0, compatibility_mode=False):
 
         # Unload all ComfyUI models (e.g. video generation) and free VRAM before loading our models
         if comfy is not None:
             comfy.model_management.unload_all_models()
         clean_vram()
 
+        # Set attention compatibility mode
+        wan_video_dit.set_compatibility_mode(compatibility_mode)
         # Reset attention logging so we log which backend is used for this run
         wan_video_dit.reset_attention_logging()
 
@@ -184,7 +186,7 @@ class VSRFINode:
         # Download models if needed
         download_models_if_needed()
 
-        device = "cuda:0"
+        device = self._get_device()
 
         # Default output directory: comfyui/output/VSRFI/
         default_output_dir = os.path.join(
@@ -233,11 +235,11 @@ class VSRFINode:
         
         pipe = FlashVSRTinyLongPipeline.from_model_manager(mm, device=device)
         pipe.TCDecoder = build_tcdecoder([512,256,128,128], device, dtype, 16+768)
-        pipe.TCDecoder.load_state_dict(torch.load(f"{model_path}/TCDecoder.ckpt", map_location=device), strict=False)
+        pipe.TCDecoder.load_state_dict(torch.load(f"{model_path}/TCDecoder.ckpt", map_location=device, weights_only=True), strict=False)
         pipe.TCDecoder.clean_mem()
         
         pipe.denoising_model().LQ_proj_in = Causal_LQ4x_Proj(3, 1536, 1).to(device, dtype=dtype)
-        pipe.denoising_model().LQ_proj_in.load_state_dict(torch.load(f"{model_path}/LQ_proj_in.ckpt", map_location="cpu"), strict=True)
+        pipe.denoising_model().LQ_proj_in.load_state_dict(torch.load(f"{model_path}/LQ_proj_in.ckpt", map_location="cpu", weights_only=True), strict=True)
         
         pipe.to(device, dtype=dtype)
         pipe.enable_vram_management(num_persistent_param_in_dit=None)
@@ -534,22 +536,36 @@ class VSRFINode:
 
         return chunk
 
-    def _auto_max_input_pixels(self, scale, device):
-        """Estimate max input tile pixels from available VRAM and scale factor."""
+    def _auto_max_input_pixels(self, scale, num_frames, device):
+        """Estimate max input tile pixels from available VRAM, scale factor, and frame count."""
         free_bytes, total_bytes = torch.cuda.mem_get_info(device)
         free_gb = free_bytes / (1024**3)
+        
         # Reserve for model weights loaded during inference (DiT + TCDecoder)
-        model_inference_gb = 3.5
-        available_gb = max(0.5, free_gb - model_inference_gb) * 0.85
-        # Empirical: VRAM scales as input_pixels * scale^2.6
-        max_pixels = available_gb * 210000 / (scale ** 2.6)
+        is_compat = getattr(wan_video_dit, 'COMPATIBILITY_MODE', False)
+        model_inference_gb = 4.5 if is_compat else 3.5
+        
+        available_gb = max(0.2, free_gb - model_inference_gb) * 0.8
+        
+        # Efficiency factor: lower is safer. 
+        # Standard attention is hungrier.
+        base_factor = 80000 if is_compat else 150000
+        
+        # Penalty for high frame counts (Temporal Decoder overhead)
+        temporal_penalty = min(1.0, 30.0 / max(1, num_frames))
+        # Don't let it shrink to nothing, but give it a floor
+        temporal_penalty = max(0.4, temporal_penalty)
+        
+        max_pixels = available_gb * base_factor * temporal_penalty / (scale ** 2.6)
         equivalent_kpx = int(max_pixels * (scale ** 3) / 1000)
-        print(f"[INFO] Auto tile: max {max_pixels/1000:.0f}k input pixels for scale={scale}, equivalent max_tile_kilopixels={equivalent_kpx} (GPU {total_bytes/(1024**3):.1f}GB total, {free_gb:.1f}GB free, {available_gb:.1f}GB available)")
+        
+        mode_str = " (COMPAT MODE)" if is_compat else ""
+        print(f"[INFO] Auto tile{mode_str}: max {max_pixels/1000:.0f}k input pixels for scale={scale}, frames={num_frames}, equivalent max_tile_kilopixels={equivalent_kpx} (GPU {total_bytes/(1024**3):.1f}GB total, {free_gb:.1f}GB free, {available_gb:.1f}GB available)")
         return max_pixels
 
     def upscale_chunk(self, pipe, frames, scale, max_tile_kilopixels, device):
         if max_tile_kilopixels == 0:
-            max_pixels = self._auto_max_input_pixels(scale, device)
+            max_pixels = self._auto_max_input_pixels(scale, frames.shape[0], device)
         else:
             max_pixels = max_tile_kilopixels * 1000 / (scale ** 3)
 
@@ -731,7 +747,7 @@ class VSRFINode:
 
         model_path = load_file_from_github_release("rife", "rife49.pth")
         model = IFNet(arch_ver="4.7")
-        model.load_state_dict(torch.load(model_path, map_location="cpu"))
+        model.load_state_dict(torch.load(model_path, map_location="cpu", weights_only=True))
         model.eval().to(device)
         return model
 

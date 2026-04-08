@@ -20,6 +20,12 @@ try:
         else:
             return web.json_response({"error": "no filename or path"}, status=400)
 
+        # Enforce that the file has a safe extension to prevent probing arbitrary system files
+        allowed_extensions = {'.mp4', '.webm', '.mkv', '.mov', '.avi', '.gif'}
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext not in allowed_extensions:
+            return web.json_response({"error": "forbidden extension"}, status=403)
+
         if not os.path.exists(file_path):
             return web.json_response({"error": "file not found"}, status=404)
 
@@ -74,6 +80,9 @@ try:
             '.gif': 'image/gif',
         }
         ext = os.path.splitext(file_path)[1].lower()
+        if ext not in content_types:
+            return web.Response(status=403, text="Forbidden: Invalid file extension")
+
         content_type = content_types.get(ext, 'application/octet-stream')
 
         return web.FileResponse(file_path, headers={'Content-Type': content_type})

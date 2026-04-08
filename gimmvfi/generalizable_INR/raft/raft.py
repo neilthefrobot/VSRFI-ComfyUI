@@ -9,18 +9,21 @@ from .corr import CorrBlock, AlternateCorrBlock
 from .utils.utils import bilinear_sampler, coords_grid, upflow8
 
 try:
-    autocast = torch.cuda.amp.autocast
-except:
-    # dummy autocast for PyTorch < 1.6
-    class autocast:
-        def __init__(self, enabled):
-            pass
-
-        def __enter__(self):
-            pass
-
-        def __exit__(self, *args):
-            pass
+    from torch import amp
+    def autocast(enabled):
+        return amp.autocast('cuda', enabled=enabled)
+except ImportError:
+    # Fallback for older PyTorch versions
+    try:
+        from torch.cuda.amp import autocast as legacy_autocast
+        def autocast(enabled):
+            return legacy_autocast(enabled=enabled)
+    except ImportError:
+        # Dummy autocast for very old PyTorch
+        class autocast:
+            def __init__(self, enabled): pass
+            def __enter__(self): pass
+            def __exit__(self, *args): pass
 
 
 class RAFT(nn.Module):

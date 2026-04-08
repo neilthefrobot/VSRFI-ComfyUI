@@ -66,6 +66,7 @@ class VSRFIFramesNode:
                 "frames_per_chunk": ("INT", {"default": 100, "min": 1, "max": 100000, "tooltip": "Number of frames to process at a time"}),
                 "max_tile_kilopixels": ("INT", {"default": 0, "min": 0, "max": 100000, "tooltip": "Used for VSR tiling. Set as high as your VRAM allows. 0 = auto-calculate based on available VRAM."}),
                 "max_gimm_kilopixels": ("INT", {"default": 0, "min": 0, "max": 100000, "tooltip": "GIMM-VFI only. Max kilopixels for flow estimation. 0 = auto."}),
+                "compatibility_mode": ("BOOLEAN", {"default": False, "tooltip": "Force PyTorch native attention (slower but more compatible with older GPUs)"}),
             }
         }
 
@@ -73,19 +74,27 @@ class VSRFIFramesNode:
     FUNCTION = "process"
     CATEGORY = "video"
 
-    def process(self, frames, scale, interpolation_factor, vfi_method, frames_per_chunk, max_tile_kilopixels, max_gimm_kilopixels):
+    def _get_device(self):
+        """Get the appropriate device using ComfyUI's model management if possible."""
+        if comfy is not None:
+            return comfy.model_management.get_torch_device()
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def process(self, frames, scale, interpolation_factor, vfi_method, frames_per_chunk, max_tile_kilopixels, max_gimm_kilopixels, compatibility_mode=False):
         # Unload all ComfyUI models (e.g. video generation) and free VRAM before loading our models
         if comfy is not None:
             comfy.model_management.unload_all_models()
         clean_vram()
 
+        # Set attention compatibility mode
+        wan_video_dit.set_compatibility_mode(compatibility_mode)
         # Reset attention logging so we log which backend is used for this run
         wan_video_dit.reset_attention_logging()
 
         # Download models if needed
         download_models_if_needed()
 
-        device = "cuda:0"
+        device = self._get_device()
 
         N, h, w, c = frames.shape
         print(f"[DEBUG] Original input: {w}x{h}")
@@ -215,17 +224,31 @@ class VSRFIFramesNode:
 
         return torch.cat(all_upscaled, dim=0)
 
-    def _auto_max_input_pixels(self, scale, device):
-        """Estimate max input tile pixels from available VRAM and scale factor."""
+    def _auto_max_input_pixels(self, scale, num_frames, device):
+        """Estimate max input tile pixels from available VRAM, scale factor, and frame count."""
         free_bytes, total_bytes = torch.cuda.mem_get_info(device)
         free_gb = free_bytes / (1024**3)
+        
         # Reserve for model weights loaded during inference (DiT + TCDecoder)
-        model_inference_gb = 3.5
-        available_gb = max(0.5, free_gb - model_inference_gb) * 0.85
-        # Empirical: VRAM scales as input_pixels * scale^2.6
-        max_pixels = available_gb * 210000 / (scale ** 2.6)
+        is_compat = getattr(wan_video_dit, 'COMPATIBILITY_MODE', False)
+        model_inference_gb = 4.5 if is_compat else 3.5
+        
+        available_gb = max(0.2, free_gb - model_inference_gb) * 0.8
+        
+        # Efficiency factor: lower is safer. 
+        # Standard attention is hungrier.
+        base_factor = 80000 if is_compat else 150000
+        
+        # Penalty for high frame counts (Temporal Decoder overhead)
+        temporal_penalty = min(1.0, 30.0 / max(1, num_frames))
+        # Don't let it shrink to nothing, but give it a floor
+        temporal_penalty = max(0.4, temporal_penalty)
+        
+        max_pixels = available_gb * base_factor * temporal_penalty / (scale ** 2.6)
         equivalent_kpx = int(max_pixels * (scale ** 3) / 1000)
-        print(f"[INFO] Auto tile: max {max_pixels/1000:.0f}k input pixels for scale={scale}, equivalent max_tile_kilopixels={equivalent_kpx} (GPU {total_bytes/(1024**3):.1f}GB total, {free_gb:.1f}GB free, {available_gb:.1f}GB available)")
+        
+        mode_str = " (COMPAT MODE)" if is_compat else ""
+        print(f"[INFO] Auto tile{mode_str}: max {max_pixels/1000:.0f}k input pixels for scale={scale}, frames={num_frames}, equivalent max_tile_kilopixels={equivalent_kpx} (GPU {total_bytes/(1024**3):.1f}GB total, {free_gb:.1f}GB free, {available_gb:.1f}GB available)")
         return max_pixels
 
     def _upscale_chunk(self, pipe, frames, scale, max_tile_kilopixels, device):
@@ -233,7 +256,7 @@ class VSRFIFramesNode:
         N, h, w, c = frames.shape
 
         if max_tile_kilopixels == 0:
-            max_pixels = self._auto_max_input_pixels(scale, device)
+            max_pixels = self._auto_max_input_pixels(scale, N, device)
         else:
             max_pixels = max_tile_kilopixels * 1000 / (scale ** 3)
 
